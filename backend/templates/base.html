@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <title>{% block title %}PerfTracker{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <!-- Top nav (desktop) -->
+  <nav class="topnav">
+    <a href="/" class="topnav__brand">
+      {{ icons.crosshair|safe }}
+      PerfTracker
+    </a>
+
+    <button class="topnav__toggle" onclick="document.getElementById('navLinks').classList.toggle('open')" aria-label="Menu">
+      {{ icons.menu|safe }}
+    </button>
+
+    <ul class="topnav__links" id="navLinks">
+      <li><a href="/" class="topnav__link {% if active == 'dashboard' %}active{% endif %}">{{ icons.dashboard|safe }} Dashboard</a></li>
+      <li><a href="/cs2" class="topnav__link {% if active == 'cs2' %}active{% endif %}">{{ icons.crosshair|safe }} CS2</a></li>
+      <li><a href="/gym" class="topnav__link {% if active == 'gym' %}active{% endif %}">{{ icons.dumbbell|safe }} Gym</a></li>
+      <li><a href="/weight" class="topnav__link {% if active == 'weight' %}active{% endif %}">{{ icons.scale|safe }} Weight</a></li>
+      <li><a href="/mental" class="topnav__link {% if active == 'mental' %}active{% endif %}">{{ icons.brain|safe }} Mental</a></li>
+      <li><button class="topnav__lock" onclick="doLogout()">{{ icons.lock|safe }} Lock</button></li>
+    </ul>
+  </nav>
+
+  <!-- Bottom nav (mobile) -->
+  <nav class="bottomnav">
+    <div class="bottomnav__inner">
+      <a href="/" class="bottomnav__item {% if active == 'dashboard' %}active{% endif %}">{{ icons.dashboard|safe }}<span>Home</span></a>
+      <a href="/cs2" class="bottomnav__item {% if active == 'cs2' %}active{% endif %}">{{ icons.crosshair|safe }}<span>CS2</span></a>
+      <a href="/gym" class="bottomnav__item {% if active == 'gym' %}active{% endif %}">{{ icons.dumbbell|safe }}<span>Gym</span></a>
+      <a href="/weight" class="bottomnav__item {% if active == 'weight' %}active{% endif %}">{{ icons.scale|safe }}<span>Weight</span></a>
+      <a href="/mental" class="bottomnav__item {% if active == 'mental' %}active{% endif %}">{{ icons.brain|safe }}<span>Mental</span></a>
+    </div>
+  </nav>
+
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/js/app.js"></script>
+  <script>
+    async function doLogout() {
+      await API.logout();
+      window.location.href = '/login';
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

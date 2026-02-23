@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}PerfTracker — Mental Health{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="gap-stack">
+  <div>
+    <h1 class="page-title">Mental Health</h1>
+    <p class="page-subtitle">Track your wellbeing</p>
+  </div>
+
+  <!-- Quick overview -->
+  <div id="quickOverview" class="card-grid card-grid-5 hidden"></div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="log">Log</button>
+    <button class="tab-btn" data-tab="charts">Charts</button>
+    <button class="tab-btn" data-tab="table">Table</button>
+  </div>
+
+  <!-- Log Tab -->
+  <div class="tab-panel active" id="tab-log">
+    <form class="card gap-stack" id="mentalForm" style="display:flex;flex-direction:column;gap:1.1rem">
+      <div class="form-row">
+        <label class="text-sm text-muted">Date:</label>
+        <input type="date" id="mDate" class="input" style="width:auto">
+      </div>
+
+      <!-- Rating inputs -->
+      <div id="ratingMood"></div>
+      <div id="ratingStress"></div>
+      <div id="ratingSleep"></div>
+      <div id="ratingEnergy"></div>
+      <div id="ratingAnxiety"></div>
+
+      <div>
+        <label class="form-label">Notes</label>
+        <textarea id="mNotes" class="textarea" placeholder="How are you feeling today?"></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full">{{ icons.plus|safe }} Log Entry</button>
+    </form>
+  </div>
+
+  <!-- Charts Tab -->
+  <div class="tab-panel" id="tab-charts">
+    <div class="gap-stack">
+      <div class="period-filter" id="mentalPeriodFilter"></div>
+      <div class="card" id="radarCard" style="display:none">
+        <p class="stat-label mb-1">Latest Overview</p>
+        <div class="chart-box"><canvas id="radarChart"></canvas></div>
+      </div>
+      <div class="card" id="trendCard" style="display:none">
+        <p class="stat-label mb-1">Trends Over Time</p>
+        <div class="chart-box"><canvas id="trendChart"></canvas></div>
+      </div>
+      <p id="chartsEmpty" class="empty-msg hidden">No data yet. Log your first entry!</p>
+    </div>
+  </div>
+
+  <!-- Table Tab -->
+  <div class="tab-panel" id="tab-table">
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Date</th><th class="td-center">Mood</th><th class="td-center">Stress</th>
+            <th class="td-center">Sleep</th><th class="td-center">Energy</th><th class="td-center">Anxiety</th>
+            <th>Notes</th><th class="td-actions"></th>
+          </tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <p id="tableEmpty" class="empty-msg hidden">No entries yet</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let entries = [];
+let ratings = { mood: null, stress: null, sleep: null, energy: null, anxiety: null };
+let chartInstances = [];
+let currentPeriod = 'all';
+
+const METRICS = [
+  { key: 'mood', label: 'Mood', color: '#06b6d4', containerId: 'ratingMood' },
+  { key: 'stress', label: 'Stress', color: '#ef4444', containerId: 'ratingStress' },
+  { key: 'sleep', label: 'Sleep Quality', color: '#a855f7', containerId: 'ratingSleep' },
+  { key: 'energy', label: 'Energy', color: '#22c55e', containerId: 'ratingEnergy' },
+  { key: 'anxiety', label: 'Anxiety', color: '#eab308', containerId: 'ratingAnxiety' },
+];
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('#mDate').value = todayISO();
+  initTabs();
+  buildRatingInputs();
+  buildPeriodFilter('mentalPeriodFilter', p => { currentPeriod = p; renderCharts(); renderTable(); });
+  loadData();
+  $('#mentalForm').addEventListener('submit', addEntry);
+});
+
+function buildRatingInputs() {
+  METRICS.forEach(m => {
+    const container = $(`#${m.containerId}`);
+    container.innerHTML = `
+      <div class="flex-between mb-1">
+        <label class="text-sm text-muted">${m.label}</label>
+        <span class="text-sm mono" style="font-weight:700;color:${m.color}" id="val_${m.key}">-</span>
+      </div>
+      <div class="rating" id="btns_${m.key}">
+        ${[1,2,3,4,5,6,7,8,9,10].map(n => `<button type="button" class="rating__btn" data-n="${n}">${n}</button>`).join('')}
+      </div>`;
+    $$('.rating__btn', container).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const n = parseInt(btn.dataset.n);
+        ratings[m.key] = n;
+        $(`#val_${m.key}`).textContent = n;
+        $$('.rating__btn', $(`#btns_${m.key}`)).forEach(b => {
+          b.classList.remove('active');
+          b.style.backgroundColor = '';
+        });
+        btn.classList.add('active');
+        btn.style.backgroundColor = m.color;
+      });
+    });
+  });
+}
+
+async function loadData() {
+  try { entries = await API.mentalAll(); } catch { entries = []; }
+  renderAll();
+}
+
+function renderAll() {
+  renderOverview();
+  renderCharts();
+  renderTable();
+}
+
+function renderOverview() {
+  const box = $('#quickOverview');
+  const filtered = getFiltered();
+  if (filtered.length === 0) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const m = filtered[0];
+  box.innerHTML = METRICS.map(met => {
+    const val = met.key === 'sleep' ? m.sleep_quality : m[met.key];
+    return `<div class="card card-sm text-center">
+      <p class="text-xs text-muted" style="margin-bottom:.1rem">${met.label}</p>
+      <p class="stat-value" style="color:${met.color}">${val ?? '-'}</p>
+      <p class="text-xs text-muted">/10</p>
+    </div>`;
+  }).join('');
+}
+
+function getFiltered() { return filterByPeriod(entries, currentPeriod); }
+
+function renderCharts() {
+  chartInstances.forEach(c => c.destroy());
+  chartInstances = [];
+
+  const filtered = getFiltered();
+  const latest = filtered[0];
+  const data = [...filtered].reverse();
+
+  if (!latest && data.length < 2) {
+    $('#radarCard').style.display = 'none';
+    $('#trendCard').style.display = 'none';
+    $('#chartsEmpty').classList.remove('hidden');
+    return;
+  }
+  $('#chartsEmpty').classList.add('hidden');
+
+  // Radar
+  if (latest) {
+    $('#radarCard').style.display = '';
+    chartInstances.push(new Chart($('#radarChart'), {
+      type: 'radar',
+      data: {
+        labels: ['Mood', 'Energy', 'Sleep', 'Low Stress', 'Low Anxiety'],
+        datasets: [{
+          label: 'Latest',
+          data: [
+            latest.mood ?? 0,
+            latest.energy ?? 0,
+            latest.sleep_quality ?? 0,
+            latest.stress ? 11 - latest.stress : 0,
+            latest.anxiety ? 11 - latest.anxiety : 0,
+          ],
+          borderColor: '#06b6d4',
+          backgroundColor: '#06b6d420',
+          borderWidth: 2,
+          pointRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { r: { beginAtZero: true, max: 10, grid: { color: '#27272a' }, angleLines: { color: '#27272a' } } },
+      },
+    }));
+  }
+
+  // Trend lines
+  if (data.length >= 2) {
+    $('#trendCard').style.display = '';
+    const labels = data.map(e => formatDate(e.date));
+    chartInstances.push(new Chart($('#trendChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: METRICS.map(m => ({
+          label: m.label,
+          data: data.map(e => m.key === 'sleep' ? e.sleep_quality : e[m.key]),
+          borderColor: m.color,
+          borderWidth: 2,
+          pointRadius: 3,
+          tension: .3,
+          fill: false,
+        })),
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { grid: { color: '#27272a' } },
+          y: { min: 0, max: 10, grid: { color: '#27272a' } },
+        },
+      },
+    }));
+  }
+}
+
+function renderTable() {
+  const body = $('#tableBody');
+  const empty = $('#tableEmpty');
+  const filtered = getFiltered();
+  if (filtered.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+  body.innerHTML = filtered.map(e => `
+    <tr>
+      <td class="nowrap">${formatDate(e.date)}</td>
+      <td class="td-center td-mono">${e.mood ?? '-'}</td>
+      <td class="td-center td-mono">${e.stress ?? '-'}</td>
+      <td class="td-center td-mono">${e.sleep_quality ?? '-'}</td>
+      <td class="td-center td-mono">${e.energy ?? '-'}</td>
+      <td class="td-center td-mono">${e.anxiety ?? '-'}</td>
+      <td class="text-muted truncate">${e.notes ? esc(e.notes) : '-'}</td>
+      <td class="td-actions"><button class="btn-icon" onclick="deleteEntry(${e.id})">${ICONS.trash.replace(/width="24"/g,'width="14"').replace(/height="24"/g,'height="14"')}</button></td>
+    </tr>`).join('');
+}
+
+async function addEntry(ev) {
+  ev.preventDefault();
+  await API.mentalAdd({
+    date: $('#mDate').value,
+    mood: ratings.mood,
+    stress: ratings.stress,
+    sleep_quality: ratings.sleep,
+    energy: ratings.energy,
+    anxiety: ratings.anxiety,
+    notes: $('#mNotes').value || undefined,
+  });
+  // Reset
+  Object.keys(ratings).forEach(k => ratings[k] = null);
+  METRICS.forEach(m => {
+    $(`#val_${m.key}`).textContent = '-';
+    $$('.rating__btn', $(`#btns_${m.key}`)).forEach(b => { b.classList.remove('active'); b.style.backgroundColor = ''; });
+  });
+  $('#mNotes').value = '';
+  await loadData();
+}
+
+async function deleteEntry(id) {
+  await API.mentalDelete(id);
+  entries = entries.filter(e => e.id !== id);
+  renderAll();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+</script>
+{% endblock %}

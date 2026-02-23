@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}PerfTracker — Dashboard{% endblock %}
+
+{% block content %}
+<div class="gap-stack">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Your performance at a glance</p>
+  </div>
+
+  <div class="card-grid card-grid-2" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));">
+    <!-- CS2 Card -->
+    <a href="/cs2" class="dash-card" id="cardCs2">
+      <div class="dash-card__header">
+        <span class="dash-card__icon">{{ icons.crosshair|safe }} CS2</span>
+        <span class="dash-card__arrow">{{ icons.arrowRight|safe }}</span>
+      </div>
+      <p class="text-muted text-sm" id="cs2Body">Loading...</p>
+    </a>
+
+    <!-- Gym Card -->
+    <a href="/gym" class="dash-card" id="cardGym">
+      <div class="dash-card__header">
+        <span class="dash-card__icon">{{ icons.dumbbell|safe }} Gym</span>
+        <span class="dash-card__arrow">{{ icons.arrowRight|safe }}</span>
+      </div>
+      <p class="text-muted text-sm" id="gymBody">Loading...</p>
+    </a>
+
+    <!-- Weight Card -->
+    <a href="/weight" class="dash-card" id="cardWeight">
+      <div class="dash-card__header">
+        <span class="dash-card__icon">{{ icons.scale|safe }} Weight</span>
+        <span class="dash-card__arrow">{{ icons.arrowRight|safe }}</span>
+      </div>
+      <p class="text-muted text-sm" id="weightBody">Loading...</p>
+    </a>
+
+    <!-- Mental Card -->
+    <a href="/mental" class="dash-card" id="cardMental">
+      <div class="dash-card__header">
+        <span class="dash-card__icon">{{ icons.brain|safe }} Mental</span>
+        <span class="dash-card__arrow">{{ icons.arrowRight|safe }}</span>
+      </div>
+      <p class="text-muted text-sm" id="mentalBody">Loading...</p>
+    </a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  // CS2
+  try {
+    const cs2 = await API.cs2Latest();
+    if (cs2) {
+      $('#cs2Body').innerHTML = `
+        <div class="mini-grid">
+          <div><span class="stat-value-sm">${cs2.kd_ratio}</span><br><span class="text-xs text-muted">K/D</span></div>
+          <div><span class="stat-value-sm">${cs2.headshot_pct}%</span><br><span class="text-xs text-muted">HS%</span></div>
+          <div><span class="stat-value-sm">${cs2.adr}</span><br><span class="text-xs text-muted">ADR</span></div>
+          <div><span class="stat-value-sm">${cs2.win_rate}%</span><br><span class="text-xs text-muted">Win Rate</span></div>
+        </div>
+        <p class="text-xs text-muted" style="margin-top:.5rem">Last sync: ${formatDateTime(cs2.timestamp)}</p>`;
+    } else {
+      $('#cs2Body').textContent = 'No data yet. Sync your stats!';
+    }
+  } catch { $('#cs2Body').textContent = 'No data yet. Sync your stats!'; }
+
+  // Gym
+  try {
+    const gym = await API.gymWeight();
+    const dates = [...new Set(gym.map(g => g.date))];
+    $('#gymBody').innerHTML = `
+      <span class="stat-value-sm">${dates.length}</span><br>
+      <span class="text-xs text-muted">Total workout days</span>
+      ${dates[0] ? `<p class="text-xs text-muted" style="margin-top:.35rem">Last session: ${formatDate(dates[0])}</p>` : ''}`;
+  } catch { $('#gymBody').textContent = 'No data yet'; }
+
+  // Weight
+  try {
+    const weights = await API.weightAll();
+    if (weights.length > 0) {
+      const latest = weights[0];
+      const prev = weights[1];
+      let deltaHtml = '';
+      if (prev) {
+        const d = latest.weight - prev.weight;
+        const cls = d > 0 ? 'color-warning' : d < 0 ? 'color-success' : 'text-muted';
+        deltaHtml = ` <span class="${cls} text-sm">${d > 0 ? '+' : ''}${d.toFixed(1)}</span>`;
+      }
+      $('#weightBody').innerHTML = `
+        <span class="stat-value-sm">${latest.weight} kg</span>${deltaHtml}<br>
+        <span class="text-xs text-muted">${formatDate(latest.date)}</span>`;
+    } else {
+      $('#weightBody').textContent = 'No entries yet';
+    }
+  } catch { $('#weightBody').textContent = 'No entries yet'; }
+
+  // Mental
+  try {
+    const mental = await API.mentalAll();
+    if (mental.length > 0) {
+      const m = mental[0];
+      $('#mentalBody').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.25rem;text-align:center">
+          <div><span class="stat-value-sm" style="color:#06b6d4">${m.mood ?? '-'}</span><br><span class="text-xs text-muted">Mood</span></div>
+          <div><span class="stat-value-sm" style="color:#22c55e">${m.energy ?? '-'}</span><br><span class="text-xs text-muted">Energy</span></div>
+          <div><span class="stat-value-sm" style="color:#a855f7">${m.sleep_quality ?? '-'}</span><br><span class="text-xs text-muted">Sleep</span></div>
+        </div>
+        <p class="text-xs text-muted" style="margin-top:.35rem">${formatDate(m.date)}</p>`;
+    } else {
+      $('#mentalBody').textContent = 'No entries yet';
+    }
+  } catch { $('#mentalBody').textContent = 'No entries yet'; }
+});
+</script>
+{% endblock %}

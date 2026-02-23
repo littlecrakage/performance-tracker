@@ -1,0 +1,519 @@
+{% extends "base.html" %}
+{% block title %}PerfTracker — CS2{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="gap-stack">
+  <!-- Header -->
+  <div class="flex-between" style="flex-wrap:wrap;gap:1rem">
+    <div>
+      <h1 class="page-title">CS2 Stats</h1>
+      <p class="page-subtitle" id="profileName">Loading...</p>
+    </div>
+    <button class="btn btn-primary" id="syncBtn" onclick="syncStats()">
+      {{ icons.refresh|safe }} Sync Leetify
+    </button>
+  </div>
+  <p id="syncError" class="color-red text-sm hidden"></p>
+  <p id="syncSuccess" class="color-green text-sm hidden"></p>
+
+  <!-- Rank Cards -->
+  <div id="rankCards" class="card-grid card-grid-4 hidden"></div>
+
+  <!-- Leetify Ratings -->
+  <div id="ratingsCard" class="card hidden">
+    <p class="stat-label mb-1">Leetify Skill Ratings</p>
+    <div class="chart-box" style="max-height:280px"><canvas id="ratingsRadar"></canvas></div>
+  </div>
+
+  <!-- Overall Stat Cards (computed from matches) -->
+  <div id="statCards" class="card-grid card-grid-4 hidden"></div>
+
+  <!-- Period Filter -->
+  <div class="period-filter" id="periodFilter"></div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="matches">Matches</button>
+    <button class="tab-btn" data-tab="charts">Charts</button>
+    <button class="tab-btn" data-tab="training">Training</button>
+    <button class="tab-btn" data-tab="notes">Notes</button>
+  </div>
+
+  <!-- Matches Tab -->
+  <div class="tab-panel active" id="tab-matches">
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Map</th>
+              <th class="td-center">Score</th>
+              <th class="td-right">K/D/A</th>
+              <th class="td-right">ADR</th>
+              <th class="td-right">HS%</th>
+              <th class="td-right">Rating</th>
+            </tr>
+          </thead>
+          <tbody id="matchesBody"></tbody>
+        </table>
+      </div>
+      <p id="matchesEmpty" class="empty-msg hidden">No matches yet. Click "Sync Leetify" to import!</p>
+    </div>
+  </div>
+
+  <!-- Charts Tab -->
+  <div class="tab-panel" id="tab-charts">
+    <div id="chartsContainer" class="gap-stack"></div>
+    <p id="chartsEmpty" class="empty-msg hidden">Need at least 2 matches to show charts.</p>
+  </div>
+
+  <!-- Notes Tab -->
+  <div class="tab-panel" id="tab-notes">
+    <div class="card">
+      <h3 class="section-title flex-center">{{ icons.msg|safe }} Session Notes</h3>
+      <form class="note-form" id="commentForm">
+        <input class="input" id="commentInput" placeholder="Add a note about your session...">
+        <button type="submit" class="btn btn-primary btn-sm">{{ icons.send|safe }}</button>
+      </form>
+      <div class="note-list mt-1" id="commentList"></div>
+    </div>
+  </div>
+
+  <!-- Training Tab -->
+  <div class="tab-panel" id="tab-training">
+    <div class="card">
+      <h3 class="section-title flex-center">{{ icons.crosshair|safe }} Log Training Session</h3>
+      <form class="form-row" id="trainingForm" style="gap:.75rem;flex-wrap:wrap;align-items:flex-end">
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label class="label" for="trainingDate">Date</label>
+          <input type="date" class="input" id="trainingDate">
+        </div>
+        <div class="form-group" style="flex:1;min-width:160px">
+          <label class="label" for="trainingType">Type</label>
+          <select class="input" id="trainingType" required>
+            <option value="deathmatch">Deathmatch</option>
+            <option value="utility">Utility Training</option>
+            <option value="prefire">Prefire</option>
+            <option value="aim_trainer">Aim Trainer</option>
+            <option value="retakes">Retakes</option>
+            <option value="demo_review">Demo Review</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:0 0 100px">
+          <label class="label" for="trainingDuration">Minutes</label>
+          <input type="number" class="input" id="trainingDuration" min="1" placeholder="30">
+        </div>
+        <div class="form-group" style="flex:2;min-width:200px">
+          <label class="label" for="trainingComment">Comment</label>
+          <input class="input" id="trainingComment" placeholder="What did you work on?">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm" style="height:38px">{{ icons.plus|safe }} Add</button>
+      </form>
+    </div>
+
+    <div class="table-wrap mt-1">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th class="td-right">Duration</th>
+              <th>Comment</th>
+              <th class="td-center" style="width:40px"></th>
+            </tr>
+          </thead>
+          <tbody id="trainingBody"></tbody>
+        </table>
+      </div>
+      <p id="trainingEmpty" class="empty-msg hidden">No training sessions logged yet.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let matches = [];
+let profile = null;
+let comments = [];
+let training = [];
+let currentPeriod = 'all';
+let radarChart = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  initTabs();
+  buildPeriodFilter('periodFilter', (p) => { currentPeriod = p; render(); }, 'all');
+  loadData();
+  $('#commentForm').addEventListener('submit', addComment);
+  $('#trainingForm').addEventListener('submit', addTraining);
+  $('#trainingDate').value = todayISO();
+});
+
+async function loadData() {
+  try { matches = await API.cs2Matches(); } catch { matches = []; }
+  try { profile = await API.cs2Profile(); } catch { profile = null; }
+  try { comments = await API.cs2Comments(); } catch { comments = []; }
+  try { training = await API.cs2Training(); } catch { training = []; }
+  render();
+}
+
+function getFiltered() {
+  const faceit = matches.filter(m => m.data_source === 'faceit');
+  return filterByPeriod(faceit, currentPeriod, 'finished_at');
+}
+
+function render() {
+  renderProfile();
+  renderRanks();
+  renderRatings();
+  renderStatCards();
+  renderMatches();
+  renderCharts();
+  renderTraining();
+  renderComments();
+}
+
+function renderProfile() {
+  const el = $('#profileName');
+  if (profile && profile.name) {
+    el.textContent = profile.name;
+    if (profile.total_matches) {
+      el.textContent += ` — ${profile.total_matches} matches tracked`;
+    }
+  } else if (matches.length > 0) {
+    el.textContent = `${matches.length} matches loaded`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function renderRanks() {
+  const box = $('#rankCards');
+  if (!profile) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  let html = '';
+
+  if (profile.leetify_rating != null) {
+    html += `<div class="card card-sm">
+      <p class="stat-label">Leetify Rating</p>
+      <p class="stat-value color-cyan">${profile.leetify_rating.toFixed(2)}</p>
+    </div>`;
+  }
+
+  if (profile.faceit_level != null) {
+    const elo = profile.faceit_elo ? ` (${profile.faceit_elo})` : '';
+    html += `<div class="card card-sm">
+      <p class="stat-label">Faceit Level</p>
+      <p class="stat-value color-yellow">${profile.faceit_level}</p>
+      <p class="stat-sub">${elo ? 'ELO ' + profile.faceit_elo : ''}</p>
+    </div>`;
+  }
+
+  if (profile.premier_rank != null) {
+    html += `<div class="card card-sm">
+      <p class="stat-label">Premier</p>
+      <p class="stat-value color-purple">${profile.premier_rank.toLocaleString()}</p>
+    </div>`;
+  }
+
+  if (profile.winrate != null) {
+    html += `<div class="card card-sm">
+      <p class="stat-label">Win Rate</p>
+      <p class="stat-value color-green">${(profile.winrate * 100).toFixed(1)}%</p>
+      <p class="stat-sub">${profile.total_matches || ''} matches</p>
+    </div>`;
+  }
+
+  box.innerHTML = html || '<p class="text-muted text-sm">No rank data available</p>';
+}
+
+function renderRatings() {
+  const card = $('#ratingsCard');
+  if (!profile || !profile.aim_rating) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+
+  if (radarChart) radarChart.destroy();
+
+  radarChart = new Chart($('#ratingsRadar'), {
+    type: 'radar',
+    data: {
+      labels: ['Aim', 'Positioning', 'Utility', 'Clutch (%)', 'Opening (%)'],
+      datasets: [{
+        label: 'Skill Rating',
+        data: [
+          profile.aim_rating || 0,
+          profile.positioning_rating || 0,
+          profile.utility_rating || 0,
+          (profile.clutch_rating || 0) * 100,
+          ((profile.opening_rating || 0) + 0.5) * 100,
+        ],
+        borderColor: '#06b6d4',
+        backgroundColor: '#06b6d420',
+        borderWidth: 2,
+        pointRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { r: { beginAtZero: true, grid: { color: '#27272a' }, angleLines: { color: '#27272a' } } },
+    },
+  });
+}
+
+function renderStatCards() {
+  const box = $('#statCards');
+  const filtered = getFiltered();
+  if (filtered.length === 0) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const avgKD = (filtered.reduce((s, m) => s + m.kd_ratio, 0) / filtered.length).toFixed(2);
+  const avgADR = (filtered.reduce((s, m) => s + m.adr, 0) / filtered.length).toFixed(1);
+  const avgHS = (filtered.reduce((s, m) => s + m.hs_pct, 0) / filtered.length).toFixed(1);
+  const avgLR = ((filtered.reduce((s, m) => s + (m.leetify_rating || 0), 0) / filtered.length) * 100).toFixed(1);
+  const wins = filtered.filter(m => m.outcome === 'win').length;
+  const wr = ((wins / filtered.length) * 100).toFixed(1);
+
+  box.innerHTML = `
+    <div class="card card-sm">
+      <p class="stat-label">Avg K/D</p>
+      <p class="stat-value color-cyan">${avgKD}</p>
+      <p class="stat-sub">${filtered.length} matches</p>
+    </div>
+    <div class="card card-sm">
+      <p class="stat-label">Avg ADR</p>
+      <p class="stat-value color-green">${avgADR}</p>
+    </div>
+    <div class="card card-sm">
+      <p class="stat-label">Avg HS%</p>
+      <p class="stat-value color-yellow">${avgHS}%</p>
+    </div>
+    <div class="card card-sm">
+      <p class="stat-label">Win Rate</p>
+      <p class="stat-value color-purple">${wr}%</p>
+      <p class="stat-sub">${wins}W ${filtered.length - wins}L</p>
+    </div>`;
+}
+
+function renderMatches() {
+  const body = $('#matchesBody');
+  const empty = $('#matchesEmpty');
+  const filtered = getFiltered();
+  if (filtered.length === 0) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  body.innerHTML = filtered.map(m => {
+    const outcomeClass = m.outcome === 'win' ? 'color-green' : m.outcome === 'loss' ? 'color-red' : 'color-yellow';
+    const scoreStr = `<span class="${outcomeClass}">${m.score_us}-${m.score_them}</span>`;
+    const lr = m.leetify_rating != null ? (m.leetify_rating * 100).toFixed(1) : '-';
+    const lrClass = m.leetify_rating > 0 ? 'color-green' : m.leetify_rating < 0 ? 'color-red' : '';
+    const date = m.finished_at ? new Date(m.finished_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+    return `<tr>
+      <td class="nowrap">${date}</td>
+      <td>${esc(m.map_name || '')}</td>
+      <td class="td-center td-mono">${scoreStr}</td>
+      <td class="td-right td-mono">${m.kills}/${m.deaths}/${m.assists}</td>
+      <td class="td-right td-mono">${m.adr ? m.adr.toFixed(1) : '-'}</td>
+      <td class="td-right td-mono">${m.hs_pct ? m.hs_pct.toFixed(0) : '-'}%</td>
+      <td class="td-right td-mono ${lrClass}">${lr}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCharts() {
+  const container = $('#chartsContainer');
+  const empty = $('#chartsEmpty');
+  const filtered = getFiltered();
+  const data = [...filtered].reverse();
+
+  if (data.length < 2) {
+    container.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const labels = data.map(m => {
+    if (!m.finished_at) return '?';
+    return new Date(m.finished_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  });
+
+  const charts = [
+    { key: 'leetify_rating', label: 'Leetify Rating', color: '#06b6d4', transform: v => v != null ? v * 100 : 0 },
+    { key: 'kd_ratio', label: 'K/D Ratio', color: '#22c55e' },
+    { key: 'adr', label: 'ADR (Damage Per Round)', color: '#eab308' },
+    { key: 'hs_pct', label: 'Headshot %', color: '#a855f7' },
+  ];
+
+  container.innerHTML = charts.map(c => `
+    <div class="card">
+      <p class="stat-label mb-1">${c.label} Over Time</p>
+      <div class="chart-box"><canvas id="chart_${c.key}"></canvas></div>
+    </div>`).join('');
+
+  charts.forEach(c => {
+    new Chart($(`#chart_${c.key}`), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: c.label,
+          data: data.map(m => c.transform ? c.transform(m[c.key]) : m[c.key]),
+          borderColor: c.color,
+          backgroundColor: c.color + '20',
+          borderWidth: 2,
+          pointRadius: 3,
+          tension: .3,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { grid: { color: '#27272a' } },
+          y: { grid: { color: '#27272a' } },
+        },
+      },
+    });
+  });
+}
+
+function renderComments() {
+  const list = $('#commentList');
+  if (comments.length === 0) {
+    list.innerHTML = '<p class="text-muted text-sm" style="padding:.5rem 0">No notes yet</p>';
+    return;
+  }
+  list.innerHTML = comments.map(c => `
+    <div class="note-item">
+      <div>
+        <p class="text-sm">${esc(c.comment)}</p>
+        <p class="text-xs text-muted mt-1">${formatDateTime(c.timestamp)}</p>
+      </div>
+      <button class="btn-icon" onclick="deleteComment(${c.id})" title="Delete">
+        ${ICONS.trash.replace(/width="24"/g, 'width="14"').replace(/height="24"/g, 'height="14"')}
+      </button>
+    </div>`).join('');
+}
+
+async function syncStats() {
+  const btn = $('#syncBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="animate-spin" style="display:inline-flex">' + ICONS.refresh.replace(/width="24"/g, 'width="16"').replace(/height="24"/g, 'height="16"') + '</span> Syncing...';
+  $('#syncError').classList.add('hidden');
+  $('#syncSuccess').classList.add('hidden');
+  try {
+    const res = await API.cs2Sync();
+    const msg = `Synced! ${res.new_matches} new, ${res.updated_matches} updated (${res.total_fetched} fetched)`;
+    $('#syncSuccess').textContent = msg;
+    $('#syncSuccess').classList.remove('hidden');
+    await loadData();
+  } catch (e) {
+    $('#syncError').textContent = e.message || 'Sync failed';
+    $('#syncError').classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = ICONS.refresh.replace(/width="24"/g, 'width="16"').replace(/height="24"/g, 'height="16"') + ' Sync Leetify';
+  }
+}
+
+async function addComment(e) {
+  e.preventDefault();
+  const input = $('#commentInput');
+  const text = input.value.trim();
+  if (!text) return;
+  try {
+    const c = await API.cs2AddComment(text);
+    comments.unshift(c);
+    renderComments();
+    input.value = '';
+  } catch {}
+}
+
+async function deleteComment(id) {
+  await API.cs2DeleteComment(id);
+  comments = comments.filter(c => c.id !== id);
+  renderComments();
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+const TRAINING_LABELS = {
+  deathmatch: 'Deathmatch',
+  utility: 'Utility Training',
+  prefire: 'Prefire',
+  aim_trainer: 'Aim Trainer',
+  retakes: 'Retakes',
+  demo_review: 'Demo Review',
+  other: 'Other',
+};
+
+function renderTraining() {
+  const body = $('#trainingBody');
+  const empty = $('#trainingEmpty');
+  const filtered = filterByPeriod(training, currentPeriod, 'date');
+  if (filtered.length === 0) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  body.innerHTML = filtered.map(t => {
+    const label = TRAINING_LABELS[t.training_type] || t.training_type;
+    const date = formatDate(t.date);
+    const dur = t.duration_minutes ? `${t.duration_minutes} min` : '-';
+    return `<tr>
+      <td class="nowrap">${date}</td>
+      <td>${esc(label)}</td>
+      <td class="td-right td-mono">${dur}</td>
+      <td class="text-sm">${esc(t.comment || '')}</td>
+      <td class="td-center">
+        <button class="btn-icon" onclick="deleteTraining(${t.id})" title="Delete">
+          ${ICONS.trash.replace(/width="24"/g, 'width="14"').replace(/height="24"/g, 'height="14"')}
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function addTraining(e) {
+  e.preventDefault();
+  const data = {
+    date: $('#trainingDate').value || todayISO(),
+    training_type: $('#trainingType').value,
+    duration_minutes: parseInt($('#trainingDuration').value) || null,
+    comment: $('#trainingComment').value.trim(),
+  };
+  try {
+    const t = await API.cs2AddTraining(data);
+    training.unshift(t);
+    renderTraining();
+    $('#trainingDuration').value = '';
+    $('#trainingComment').value = '';
+  } catch {}
+}
+
+async function deleteTraining(id) {
+  await API.cs2DeleteTraining(id);
+  training = training.filter(t => t.id !== id);
+  renderTraining();
+}
+</script>
+{% endblock %}

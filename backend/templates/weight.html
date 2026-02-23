@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}PerfTracker — Weight{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="gap-stack">
+  <div>
+    <h1 class="page-title">Weight Tracker</h1>
+    <p class="page-subtitle">Track your body weight over time</p>
+  </div>
+
+  <!-- Stats Cards -->
+  <div id="statCards" class="card-grid card-grid-4 hidden"></div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="log">Log</button>
+    <button class="tab-btn" data-tab="chart">Chart</button>
+    <button class="tab-btn" data-tab="table">Table</button>
+  </div>
+
+  <!-- Log Tab -->
+  <div class="tab-panel active" id="tab-log">
+    <form class="card" id="weightForm">
+      <h3 class="text-sm" style="font-weight:500;margin-bottom:.65rem">Log Weight</h3>
+      <div class="form-grid">
+        <input type="date" id="wDate" class="input">
+        <input type="number" step="0.1" id="wWeight" class="input" placeholder="Weight (kg)" required>
+      </div>
+      <input id="wComment" class="input mt-1" placeholder="Comment (optional)">
+      <button type="submit" class="btn btn-primary btn-full mt-1">{{ icons.plus|safe }} Log Weight</button>
+    </form>
+  </div>
+
+  <!-- Chart Tab -->
+  <div class="tab-panel" id="tab-chart">
+    <div class="period-filter" id="weightPeriodFilter"></div>
+    <div class="card">
+      <div id="chartContainer" class="chart-box"></div>
+      <p id="chartEmpty" class="empty-msg hidden">Need at least 2 entries to show chart</p>
+    </div>
+  </div>
+
+  <!-- Table Tab -->
+  <div class="tab-panel" id="tab-table">
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Date</th><th class="td-right">Weight (kg)</th><th>Comment</th><th class="td-actions"></th></tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <p id="tableEmpty" class="empty-msg hidden">No entries yet</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let entries = [];
+let chartInstance = null;
+let currentPeriod = 'all';
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('#wDate').value = todayISO();
+  initTabs();
+  buildPeriodFilter('weightPeriodFilter', p => { currentPeriod = p; renderChart(); renderTable(); });
+  loadData();
+  $('#weightForm').addEventListener('submit', addWeight);
+});
+
+async function loadData() {
+  try { entries = await API.weightAll(); } catch { entries = []; }
+  renderAll();
+}
+
+function renderAll() {
+  renderStats();
+  renderChart();
+  renderTable();
+}
+
+function renderStats() {
+  const box = $('#statCards');
+  if (entries.length === 0) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const latest = entries[0];
+  const prev = entries[1];
+  const oldest = entries[entries.length - 1];
+  const dp = prev ? latest.weight - prev.weight : null;
+  const dt = entries.length > 1 ? latest.weight - oldest.weight : null;
+
+  let html = `
+    <div class="card card-sm">
+      <p class="stat-label">Current</p>
+      <p class="stat-value">${latest.weight}</p>
+      <p class="stat-sub">kg</p>
+    </div>`;
+
+  if (dp !== null) {
+    const cls = dp > 0 ? 'color-warning' : dp < 0 ? 'color-success' : '';
+    html += `
+      <div class="card card-sm">
+        <p class="stat-label">vs Previous</p>
+        <p class="stat-value ${cls}">${dp > 0 ? '+' : ''}${dp.toFixed(1)}</p>
+        <p class="stat-sub">kg</p>
+      </div>`;
+  }
+
+  if (dt !== null) {
+    const cls = dt > 0 ? 'color-warning' : dt < 0 ? 'color-success' : '';
+    html += `
+      <div class="card card-sm">
+        <p class="stat-label">Total Change</p>
+        <p class="stat-value ${cls}">${dt > 0 ? '+' : ''}${dt.toFixed(1)}</p>
+        <p class="stat-sub">kg since ${formatDate(oldest.date)}</p>
+      </div>`;
+  }
+
+  html += `
+    <div class="card card-sm">
+      <p class="stat-label">Entries</p>
+      <p class="stat-value">${entries.length}</p>
+      <p class="stat-sub">total readings</p>
+    </div>`;
+
+  box.innerHTML = html;
+}
+
+function getFiltered() { return filterByPeriod(entries, currentPeriod); }
+
+function renderChart() {
+  const container = $('#chartContainer');
+  const empty = $('#chartEmpty');
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  const data = [...getFiltered()].reverse();
+  if (data.length < 2) {
+    container.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  container.innerHTML = '<canvas id="weightChart"></canvas>';
+
+  chartInstance = new Chart($('#weightChart'), {
+    type: 'line',
+    data: {
+      labels: data.map(e => formatDate(e.date)),
+      datasets: [{
+        label: 'Weight (kg)',
+        data: data.map(e => e.weight),
+        borderColor: '#06b6d4',
+        backgroundColor: '#06b6d420',
+        borderWidth: 2,
+        pointRadius: 4,
+        tension: .3,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { grid: { color: '#27272a' } },
+        y: { grid: { color: '#27272a' }, suggestedMin: Math.min(...data.map(e => e.weight)) - 1, suggestedMax: Math.max(...data.map(e => e.weight)) + 1 },
+      },
+    },
+  });
+}
+
+function renderTable() {
+  const body = $('#tableBody');
+  const empty = $('#tableEmpty');
+  const filtered = getFiltered();
+  if (filtered.length === 0) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  body.innerHTML = filtered.map(e => `
+    <tr>
+      <td class="nowrap">${formatDate(e.date)}</td>
+      <td class="td-right td-mono">${e.weight}</td>
+      <td class="text-muted">${e.comment ? esc(e.comment) : '-'}</td>
+      <td class="td-actions"><button class="btn-icon" onclick="deleteWeight(${e.id})">${ICONS.trash.replace(/width="24"/g,'width="14"').replace(/height="24"/g,'height="14"')}</button></td>
+    </tr>`).join('');
+}
+
+async function addWeight(ev) {
+  ev.preventDefault();
+  const w = $('#wWeight').value;
+  if (!w) return;
+  await API.weightAdd({
+    date: $('#wDate').value,
+    weight: parseFloat(w),
+    comment: $('#wComment').value || undefined,
+  });
+  $('#wWeight').value = '';
+  $('#wComment').value = '';
+  await loadData();
+}
+
+async function deleteWeight(id) {
+  await API.weightDelete(id);
+  entries = entries.filter(e => e.id !== id);
+  renderAll();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+</script>
+{% endblock %}
