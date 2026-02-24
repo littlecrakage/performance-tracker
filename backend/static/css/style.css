@@ -595,8 +595,87 @@ tbody td { padding: .6rem .75rem; }
   background: rgba(39, 39, 42, .25);
   font-weight: 500;
   font-size: .9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
 }
 
+.btn-yt {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  padding: .15rem .45rem;
+  border-radius: 4px;
+  background: #ff0000;
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 600;
+  text-decoration: none;
+  line-height: 1.4;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.btn-yt:hover { background: #cc0000; }
+.btn-yt--sm { padding: .1rem .3rem; font-size: .65rem; }
+
+/* ── YouTube Search Modal ─────────────────────────────── */
+.yt-results {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.yt-video-card {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface, #09090b);
+  transition: border-color .15s;
+}
+.yt-video-card:hover { border-color: var(--accent, #06b6d4); }
+
+.yt-thumb {
+  width: 120px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--border);
+}
+
+.yt-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.yt-title {
+  font-size: .8rem;
+  font-weight: 500;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.yt-channel {
+  font-size: .7rem;
+  color: var(--muted);
+  margin-top: .2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 500px) {
+  .yt-thumb { width: 80px; height: 45px; }
+}
 
 /* ── Period Filter ────────────────────────────────────── */
 .period-filter {

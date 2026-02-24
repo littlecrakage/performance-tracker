@@ -245,6 +245,7 @@ function openExerciseLibrary(prefillType) {
               <option value="">Category</option>
               ${CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('')}
             </select>
+            <input class="input" id="newExUrl" placeholder="YouTube URL (optional)" style="flex:2;min-width:160px">
             <input type="hidden" id="newExType" value="${type}">
             <button type="submit" class="btn btn-primary btn-sm">Add</button>
           </form>
@@ -272,12 +273,99 @@ function renderLibList(type) {
     box.innerHTML = '<div class="exercise-dropdown-empty">No exercises yet — add one above</div>';
     return;
   }
-  box.innerHTML = lib.map(ex => `
-    <div class="exercise-lib-item">
-      <span class="exercise-lib-name">${esc(ex.name)}</span>
-      <span class="exercise-lib-cat">${ex.category || ''}</span>
-      <button class="btn-icon" onclick="deleteExerciseFromLib(${ex.id}, '${type}')">${ICONS.trash.replace(/width="24"/g,'width="14"').replace(/height="24"/g,'height="14"')}</button>
-    </div>`).join('');
+  const trashIcon = ICONS.trash.replace(/width="24"/g,'width="14"').replace(/height="24"/g,'height="14"');
+  box.innerHTML = lib.map(ex => {
+    const ytLink = ex.youtube_url
+      ? '<a href="' + esc(ex.youtube_url) + '" target="_blank" rel="noopener noreferrer" class="btn-yt btn-yt--sm" title="Watch on YouTube">&#9654;</a>'
+      : '';
+    return '<div class="exercise-lib-item">'
+      + '<span class="exercise-lib-name">' + esc(ex.name) + '</span>'
+      + '<span class="exercise-lib-cat">' + (ex.category || '') + '</span>'
+      + ytLink
+      + '<button class="btn-icon" data-exid="' + ex.id + '" data-extype="' + type + '" onclick="setYoutubeUrl(+this.dataset.exid,this.dataset.extype)" title="Set YouTube URL">&#128279;</button>'
+      + '<button class="btn-icon" onclick="deleteExerciseFromLib(' + ex.id + ',\'' + type + '\')">' + trashIcon + '</button>'
+      + '</div>';
+  }).join('');
+}
+
+function setYoutubeUrl(id, type) {
+  const lib = type === 'weight' ? exerciseLibW : exerciseLibC;
+  const ex = lib.find(e => e.id === id);
+  openYoutubeSearchModal(id, (ex && ex.name) || '', type);
+}
+
+function openYoutubeSearchModal(exerciseId, exerciseName, type) {
+  document.getElementById('ytSearchModal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'ytSearchModal';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:580px;width:95vw">
+      <div class="modal-header">
+        <h3>Find Tutorial Video</h3>
+        <button class="modal-close" onclick="document.getElementById('ytSearchModal').remove()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="gap-stack" style="gap:.75rem">
+          <div style="display:flex;gap:.5rem">
+            <input class="input" id="ytQuery" value="${esc(exerciseName)} tutorial form" style="flex:1" placeholder="Search YouTube...">
+            <button class="btn btn-primary btn-sm" onclick="doYoutubeSearch(${exerciseId},'${type}')">Search</button>
+          </div>
+          <div id="ytResults"></div>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#ytQuery').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doYoutubeSearch(exerciseId, type); }
+  });
+
+  doYoutubeSearch(exerciseId, type);
+}
+
+async function doYoutubeSearch(exerciseId, type) {
+  const query = document.getElementById('ytQuery')?.value.trim();
+  if (!query) return;
+  const results = document.getElementById('ytResults');
+  results.innerHTML = '<p class="exercise-dropdown-empty">Searching...</p>';
+  try {
+    const videos = await API.gymYoutubeSearch(query);
+    if (videos.length === 0) {
+      results.innerHTML = '<p class="exercise-dropdown-empty">No results found — try a different search</p>';
+      return;
+    }
+    results.innerHTML = videos.map(v => `
+      <div class="yt-video-card">
+        <img class="yt-thumb" src="${v.thumbnail}" alt="" loading="lazy">
+        <div class="yt-info">
+          <p class="yt-title">${esc(v.title)}</p>
+          <p class="yt-channel">${esc(v.channel)}</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:.35rem;flex-shrink:0">
+          <a href="${v.url}" target="_blank" rel="noopener noreferrer" class="btn-yt btn-yt--sm" title="Preview on YouTube">&#9654;</a>
+          <button class="btn btn-primary btn-sm" onclick="selectYoutubeVideo(${exerciseId},'${v.url}','${type}')">Select</button>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    results.innerHTML = `<p class="exercise-dropdown-empty">${esc(err.message || 'Search failed')}</p>`;
+  }
+}
+
+async function selectYoutubeVideo(exerciseId, url, type) {
+  try {
+    await API.gymUpdateExercise(exerciseId, { youtube_url: url });
+    await reloadExerciseLib();
+    renderLibList(type);
+    renderExerciseGroups();
+    document.getElementById('ytSearchModal')?.remove();
+  } catch (err) {
+    alert(err.message || 'Failed to save video');
+  }
 }
 
 async function addExerciseFromModal(e) {
@@ -285,10 +373,12 @@ async function addExerciseFromModal(e) {
   const name = $('#newExName').value.trim();
   const category = $('#newExCategory').value;
   const exercise_type = $('#newExType').value;
+  const youtube_url = $('#newExUrl').value.trim() || null;
   if (!name) return;
   try {
-    await API.gymAddExercise({ name, category, exercise_type });
+    await API.gymAddExercise({ name, category, exercise_type, youtube_url });
     $('#newExName').value = '';
+    $('#newExUrl').value = '';
     await reloadExerciseLib();
     renderLibList(exercise_type);
   } catch (err) {
@@ -342,9 +432,14 @@ function renderExerciseGroups() {
   }
   empty.classList.add('hidden');
 
-  box.innerHTML = Object.entries(groups).map(([name, sets]) => `
+  box.innerHTML = Object.entries(groups).map(([name, sets]) => {
+    const libEx = exerciseLibW.find(e => e.name.toLowerCase() === name.toLowerCase());
+    const ytBtn = (libEx && libEx.youtube_url)
+      ? '<a href="' + esc(libEx.youtube_url) + '" target="_blank" rel="noopener noreferrer" class="btn-yt" title="Watch on YouTube">&#9654; YouTube</a>'
+      : '';
+    return `
     <div class="exercise-group">
-      <div class="exercise-group__header">${esc(name)}</div>
+      <div class="exercise-group__header"><span>${esc(name)}</span>${ytBtn}</div>
       <table>
         <thead><tr><th style="padding-left:1rem">Set</th><th class="td-right">Reps</th><th class="td-right">Weight</th><th class="td-right">Rest</th><th class="td-actions"></th></tr></thead>
         <tbody>${sets.map(s => `
@@ -357,7 +452,8 @@ function renderExerciseGroups() {
           </tr>`).join('')}</tbody>
       </table>
       ${sets[0]?.comment ? `<p class="text-xs text-muted" style="padding:.5rem 1rem;border-top:1px solid var(--border)">${esc(sets[0].comment)}</p>` : ''}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderCardioList() {

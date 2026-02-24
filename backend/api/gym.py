@@ -1,7 +1,8 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from database import db
 from models import GymWeightSet, GymCardioEntry, Exercise
 from datetime import date
+import requests as http
 
 gym_bp = Blueprint('gym', __name__)
 
@@ -38,10 +39,24 @@ def add_exercise():
         name=name,
         category=data.get('category', '').strip() or None,
         exercise_type=exercise_type,
+        youtube_url=data.get('youtube_url', '').strip() or None,
     )
     db.session.add(exercise)
     db.session.commit()
     return jsonify(exercise.to_dict()), 201
+
+
+@gym_bp.route('/api/gym/exercises/<int:id>', methods=['PUT'])
+def update_exercise(id):
+    """Update an exercise (e.g. set its YouTube URL)."""
+    exercise = Exercise.query.get_or_404(id)
+    data = request.get_json()
+    if 'youtube_url' in data:
+        exercise.youtube_url = data['youtube_url'].strip() if data['youtube_url'] else None
+    if 'category' in data:
+        exercise.category = data['category'].strip() or None
+    db.session.commit()
+    return jsonify(exercise.to_dict())
 
 
 @gym_bp.route('/api/gym/exercises/<int:id>', methods=['DELETE'])
@@ -185,3 +200,44 @@ def get_cardio_exercise_names():
     """Get list of unique cardio exercise names."""
     exercises = db.session.query(GymCardioEntry.exercise_name).distinct().all()
     return jsonify([e[0] for e in exercises])
+
+
+@gym_bp.route('/api/gym/youtube-search', methods=['GET'])
+def youtube_search():
+    """Search YouTube for exercise tutorial videos."""
+    api_key = current_app.config.get('YOUTUBE_API_KEY')
+    if not api_key:
+        return jsonify({'error': 'YouTube API key not configured — add YOUTUBE_API_KEY to .env'}), 503
+
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'error': 'Query parameter q is required'}), 400
+
+    try:
+        resp = http.get(
+            'https://www.googleapis.com/youtube/v3/search',
+            params={
+                'part': 'snippet',
+                'type': 'video',
+                'maxResults': 6,
+                'q': query,
+                'key': api_key,
+                'relevanceLanguage': 'en',
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        items = resp.json().get('items', [])
+        videos = [
+            {
+                'id': item['id']['videoId'],
+                'title': item['snippet']['title'],
+                'channel': item['snippet']['channelTitle'],
+                'thumbnail': item['snippet']['thumbnails']['medium']['url'],
+                'url': f'https://www.youtube.com/watch?v={item["id"]["videoId"]}',
+            }
+            for item in items
+        ]
+        return jsonify(videos)
+    except http.exceptions.RequestException as e:
+        return jsonify({'error': str(e)}), 502
