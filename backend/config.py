@@ -13,4 +13,5 @@ class Config:
     TEMPLATES_AUTO_RELOAD = True
     STEAM_ID = os.getenv('STEAM_ID')
     LEETIFY_API_KEY = os.getenv('LEETIFY_API_KEY')
+    YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
     PIN = os.getenv('APP_PIN', '1337')

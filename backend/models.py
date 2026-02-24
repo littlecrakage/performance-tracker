@@ -123,6 +123,7 @@ class Exercise(db.Model):
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50))  # Chest, Back, Legs, Shoulders, Arms, Core, Cardio, etc.
     exercise_type = db.Column(db.String(10), default='weight')  # weight or cardio
+    youtube_url = db.Column(db.String(500))  # Optional YouTube tutorial URL
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -135,6 +136,7 @@ class Exercise(db.Model):
             'name': self.name,
             'category': self.category,
             'exercise_type': self.exercise_type,
+            'youtube_url': self.youtube_url,
             'created_at': self.created_at.isoformat(),
         }
 

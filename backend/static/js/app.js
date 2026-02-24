@@ -49,7 +49,9 @@ const API = {
   gymCardioExercises() { return this.get('/api/gym/cardio/exercises'); },
   gymExercises(type) { return this.get('/api/gym/exercises' + (type ? `?type=${type}` : '')); },
   gymAddExercise(data) { return this.post('/api/gym/exercises', data); },
+  gymUpdateExercise(id, data) { return this.put(`/api/gym/exercises/${id}`, data); },
   gymDeleteExercise(id) { return this.del(`/api/gym/exercises/${id}`); },
+  gymYoutubeSearch(q) { return this.get(`/api/gym/youtube-search?q=${encodeURIComponent(q)}`); },
 
   // Weight
   weightAll() { return this.get('/api/weight'); },
